@@ -1,0 +1,13 @@
+diff --git a/scripts/installer b/scripts/installer
+--- a/scripts/installer
++++ b/scripts/installer
+@@ -30,7 +30,7 @@ use RV\Command\Installer\UpgradeCommand;
+ 
+ $application = new Application();
+ 
+-$application->add(new InstallCommand());
+-$application->add(new UpgradeCommand());
++$application->add(new InstallCommand('install'));
++$application->add(new UpgradeCommand('upgrade'));
+ 
+ $application->run();
