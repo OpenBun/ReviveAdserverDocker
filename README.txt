@@ -1,167 +1,222 @@
-Revive Adserver Docker
-=====================
+Revive Adserver 6.0.8 - Official Release Docker Deployment
+========================================================
 
-PHP 8.4 / Apache + MariaDB 11.4 LTS, with explicit installation, migration,
-backup and upgrade commands. No database, configuration backup, credentials
-or uploaded creatives are included in this repository.
+PUBLIC repository: no database dump, private configuration, uploaded creatives,
+customer plugin snapshot or credentials are included.
 
-Source build
-------------
-Builds https://github.com/revive-adserver/revive-adserver at commit:
-  5cc7dd9673af30302061c62a0207cbdfd03b7026
-The source version is 6.1.0-dev: this is a development build, not an official
-stable release. The build runs upstream's Ant package target with locked
-Composer dependencies and serves only the generated distribution.
+Official package:
+  https://download.revive-adserver.com/revive-adserver-6.0.8.zip
+SHA-256:
+  8ea81978b876bfeeea1a985e2b9a2bc9a62b1e6fc9bad99e4756a933f588b38d
 
-docker/installer-compat.patch names the installer commands explicitly for
-the pinned Symfony dependency. Future commits may need a different patch.
-PHP/Composer/MariaDB base-image tags can move: record image digests for
-production reproducibility and rollback.
+Dockerfile downloads this ZIP over HTTPS and verifies its checksum before
+extracting it. It does NOT clone GitHub master or install development source.
+The packaged official CLI/dependencies/plugins are used without the old
+GitHub-development compatibility patch.
+The HTTPS download helper runs in a disposable Python build stage (to handle
+the official endpoint reliably); Python is not installed in the runtime image.
 
-Requirements
-------------
-Linux, Docker Engine, Docker Compose v2+, Python 3.12+, and permission to
-manage Docker and assign state files to container UID/GID 33 (www-data).
-The management utility uses only Python's standard library.
+Stack: PHP 8.4 + Apache, MariaDB 11.4, optional hourly maintenance worker.
+Requirements: Docker Engine, Docker Compose v2.20+; Python 3.10+ only if using
+the optional management helper. Record base-image digests if a completely
+reproducible build is required: PHP/MariaDB tags can receive updates.
 
-Fresh installation
-------------------
-Run from this repository:
-  python3 scripts/manage.py init --state-dir /private/revive-state
+IMPORTANT: This is for new 6.0.8 deployments or a planned supported migration.
+Never attach a 6.1.0-dev/newer database or its volumes to this image. This is
+not a downgrade for an existing development-version/private deployment.
+
+Files
+-----
+Dockerfile                    Official ZIP image build
+docker-compose.yml            Canonical deployment, no host ports by default
+docker-compose.local.yml      Optional localhost:8080 port publishing
+compose.yaml                  Compatibility alias for docker-compose.yml
+.env.example                  Settings template; real .env must stay private
+docker/runtime.php            First-start seeding, permission repair, CLI install
+scripts/manage.py             Optional environment/install/backup/check helpers
+
+Docker Compose quick start
+--------------------------
+Run in a NEW checkout/deployment:
+  git clone https://github.com/OpenBun/ReviveAdserverDocker.git
+  cd ReviveAdserverDocker
+  cp .env.example .env
+
+Edit .env and set DIFFERENT long random values for DB_PASSWORD and
+DB_ROOT_PASSWORD. Leave real credentials out of Git and screenshots.
+For local access leave REVIVE_HOST=localhost:8080 and REVIVE_SCHEME=http.
+
+Validate, build and launch:
+  docker compose -f docker-compose.yml -f docker-compose.local.yml config --quiet
+  docker compose -f docker-compose.yml -f docker-compose.local.yml up --build -d
+
+Open http://localhost:8080/app/www/admin/ and complete the browser installer:
+  Database host: db
+  Port: 3306
+  Database/user: DB_NAME and DB_USER from your private .env (default revive)
+  Password: DB_PASSWORD from your private .env
+
+Use a strong administrator password, different from the database password.
+The installer is only for an EMPTY database. Protect initial setup from
+untrusted visitors until installation is finished.
+
+Optional helper instead of manually generating .env passwords:
+  python3 scripts/manage.py init
   python3 scripts/manage.py build
+  python3 scripts/manage.py --local up
   python3 scripts/manage.py install --email admin@example.com
   python3 scripts/manage.py verify
-  python3 scripts/manage.py enable-maintenance
+The install command prompts invisibly for admin credentials, sends them over
+stdin rather than command-line arguments and never prints database passwords.
+It disables request-triggered maintenance; enable the worker afterwards.
 
-Install prompts invisibly for the new admin username/password and refuses
-a nonempty database. Database passwords are generated privately; they are
-not printed or stored in .env. New databases use InnoDB.
-Open http://localhost:8080/app/www/admin/ for the default local deployment.
+Environment-driven installation
+--------------------------------
+For a fresh EMPTY database, set these privately before first deployment:
+  REVIVE_AUTO_INSTALL=1
+  REVIVE_ADMIN_USERNAME=your-unique-admin-name
+  REVIVE_ADMIN_PASSWORD=your-long-admin-password
+  REVIVE_ADMIN_EMAIL=your-admin-email@example.com
+The official CLI installer runs once. Existing configuration is preserved;
+it does not recreate the admin on redeploy and never auto-upgrades a schema.
+After successful install, remove the admin password from the environment and
+set REVIVE_AUTO_INSTALL=0. Do not use automatic installation to restore data.
 
-Migrating an existing Revive 5.5.0 installation
-----------------------------------------------
-Keep source backups outside this checkout and outside public web directories.
-This restore helper specifically supports a MySQL SQL dump, a ZIP containing
-var/, and a ZIP containing images/. Existing custom code/plugins require a
-separate compatibility review; they cannot be recovered from these files.
+Easypanel option A - Compose service (includes MariaDB)
+------------------------------------------------------
+1. Create/open a project -> New Service -> Compose -> Git source.
+2. Repository: https://github.com/OpenBun/ReviveAdserverDocker.git
+   Branch: main
+   Build Path: /
+   Docker Compose File: docker-compose.yml
+3. In Environment enable Create .env file. Use .env.example as the template.
+   Set DB_PASSWORD and DB_ROOT_PASSWORD to two different strong values.
+   Set REVIVE_HOST to your actual domain (no scheme or path).
+   Set REVIVE_SCHEME=https.
+   For no browser DB setup, opt into environment-driven installation above.
+4. Deploy. Builds/downloads run during deployment; DB health must pass first.
+5. Domains -> your public hostname -> internal service web -> port 80 ->
+   internal HTTP, public HTTPS enabled. Point DNS to the Easypanel server.
+6. Open https://YOUR-DOMAIN/app/www/admin/. Finish the browser wizard if you
+   did not opt into CLI installation; otherwise log in with the admin account.
 
-  python3 scripts/manage.py init --state-dir /private/revive-migration
-  python3 scripts/manage.py build
-  python3 scripts/manage.py restore \
-    --sql /private/legacy.sql \
-    --var /private/legacy-var.zip \
-    --images /private/legacy-images.zip \
-    --config ads.example.com.conf.php
-  python3 scripts/manage.py up
-  python3 scripts/manage.py verify
-  python3 scripts/manage.py upgrade
+There are no container_name or host ports in the canonical Compose file.
+Easypanel manages routing/TLS. Do not add the local port overlay in Easypanel
+and do not route a public domain to the database.
+Compose automatically creates all five persistent named volumes. No manual
+host folders, secret-file uploads, SSH copying or instance data in Git needed.
 
-The last command prompts for the EXISTING Revive admin login and uses the
-official CLI upgrader. Alternatively finish the browser wizard, specifying
-/previous if asked for the previous installation path. Do not initialize a
-fresh database over existing data. A failed upgrade must not be retried
-blindly: inspect the log and restore a consistent snapshot if necessary.
+Easypanel option B - App service with Dockerfile + separate MariaDB
+-----------------------------------------------------------------
+1. Create a MariaDB service in the SAME Easypanel project. Leave its database
+   EMPTY for a fresh installation; note the internal hostname and credentials.
+2. Create an APP service. Source: GitHub OpenBun/ReviveAdserverDocker.
+   Branch main, Build Path /, Builder Dockerfile, Dockerfile Path Dockerfile.
+   Do NOT choose pasted inline Dockerfile source: docker/ files are required.
+3. Storage -> add four persistent VOLUME mounts:
+   revive-var           -> /var/www/html/app/var
+   revive-images        -> /var/www/html/app/www/images
+   revive-plugins       -> /var/www/html/app/plugins
+   revive-admin-plugins -> /var/www/html/app/www/admin/plugins
+   Do not mount system /var or the entire app directory.
+4. In APP Environment set:
+   REVIVE_HOST=ads.example.com
+   REVIVE_SCHEME=https
+   REVIVE_DB_HOST=YOUR_EASYPANEL_INTERNAL_DB_HOST
+   REVIVE_DB_PORT=3306
+   REVIVE_DB_NAME=YOUR_DATABASE
+   REVIVE_DB_USER=YOUR_DATABASE_USER
+   REVIVE_DB_PASSWORD=YOUR_DATABASE_PASSWORD
+   TZ=UTC
+   For automatic fresh install, also set REVIVE_AUTO_INSTALL=1 and the three
+   REVIVE_ADMIN_* variables. Keep those values private.
+   Use internal DB port 3306, not a published forwarding port or localhost.
+5. Domains: actual hostname, container port 80, internal HTTP, public HTTPS.
+6. Keep one replica/default start command; deploy and complete setup/login.
 
-The helper reconstructs previous bundled plugin files from the verified
-official 5.5.0 archive. It excludes old logs/caches/compiled templates,
-changes URLs to the staging hostname, disables automatic maintenance and
-regenerates the staging delivery-signing secret.
-Disabled obsolete openX3rdPartyServers registrations are removed because
-that plugin was retired in 5.1. Enabled obsolete entries require review.
+The image alone does not start MariaDB. These APP variables are distinct from
+the Compose DB_PASSWORD/DB_USER variables: Compose maps them automatically.
+The Dockerfile does not consume database/admin passwords as build arguments.
+When config exists, runtime settings update DB/domain/local storage paths
+without resetting unrelated settings or installed plugins.
 
-Plugin settings are preserved, not blindly enabled. If Invocation Code is
-blank, check whether openXInvocationTags is disabled. Delivery, logging,
-cache, targeting and reports also require their corresponding plugins.
-The development build's optional apVideo requires the VAST component; an
-old disabled video plugin can cause that post-upgrade task to fail.
-An upgrade completion screen is not a substitute for plugin diagnostics.
-
-MariaDB 11.4.5+ accepts MySQL 8 utf8mb4_0900_* collation names as aliases
-for newer Unicode collations. SQL is not rewritten. Verify comparison,
-sorting and uniqueness behavior on real data before production use.
-Imported MyISAM tables remain MyISAM: --single-transaction alone does not
-provide a consistent backup for them.
-
-After upgrade, verify plugin diagnostics, sample campaign delivery, image
-assets, clicks/conversions and historical statistics, then:
-  python3 scripts/manage.py verify
-  python3 scripts/manage.py enable-maintenance
-The scheduler runs at minute 01 of each UTC hour as www-data. It refuses
-to start while the database version differs from the configured image.
-
-Private storage and backups
----------------------------
-State is stored OUTSIDE the source/build directory. .env is private local
-settings; .env.example is the only environment file intended for Git.
-MariaDB data is in a named volume. No database port is exposed.
-Never run "docker compose down -v" on data you want to retain.
-
-  python3 scripts/manage.py backup
-
-Backup stops local app writers, uses --lock-all-tables, archives matching
-configuration/creatives/plugins, records deployment settings and secrets,
-and restarts previously running services. The dated private path is printed.
-Encrypt off-host copies and test restoration. Retain the matching image.
-Recovery of a dated snapshot is an operator procedure: use a NEW isolated
-project/database, restore database.sql and the matching state together, and
-align DB secrets and URLs before starting the matching application image.
-The restore subcommand handles the legacy input format, not dated snapshots.
-
-Do not run an old image against an upgraded database. Production cutover
-needs a final consistent snapshot and a plan for writes during DNS changes;
-rolling back after new traffic arrives may discard new events.
-
-Future GitHub source updates
+Persistence and permissions
 ----------------------------
-Review upstream compatibility changes, then:
-  python3 scripts/manage.py stage-release \
-    --commit FULL_40_CHARACTER_COMMIT --version MATCHING_SOURCE_VERSION
-  python3 scripts/manage.py upgrade
-  python3 scripts/manage.py verify
-  python3 scripts/manage.py enable-maintenance
-The staging step builds first, backs up, snapshots previous code, retires
-old plugin directories and stops web. Database migrations are never run
-silently on ordinary container startup.
+The DB uses mariadb-data. Four application volumes hold var, images, plugins
+and admin plugin files. Ordinary redeployment seeds packaged defaults once
+and preserves existing files. Required mutable paths use www-data 33:33,
+directories 0750 and files 0640, including packaged cache README files.
+Symlinked mutable paths are refused instead of changing files outside them.
+Never delete volumes or run docker compose down -v on data you want to retain.
+Back up and review state before changing release/checksum/volume definitions.
 
-Multiple deployments
+Release markers prevent silently overlaying another release's plugin data.
+Legacy development/private-bootstrap state is refused. A configured database
+newer than the image is also refused. Do not bypass these checks to downgrade.
+
+Maintenance and email
 ---------------------
-  python3 scripts/manage.py --env-file /private/other.env init \
-    --state-dir /private/other-state --project revive-other --port 8082
-Supply the same --env-file before every subsequent subcommand. Use unique
-project names, state directories and ports.
+With Compose, after installation:
+  docker compose -f docker-compose.yml exec --user root web revive-enable-maintenance
+  docker compose -f docker-compose.yml --profile maintenance up -d maintenance
+Or: python3 scripts/manage.py enable-maintenance
 
-HTTPS / reverse proxy
----------------------
-Default web access is loopback-only. compose.live.yaml optionally joins web
-to an existing Docker proxy network. Set in the private .env:
-  COMPOSE_FILE=compose.yaml:compose.live.yaml
-  PROXY_NETWORK=your-existing-proxy-network
-  PUBLIC_HOST=ads.example.com
-  PUBLIC_SCHEME=https
-Set these before restore/install. The supplied overlay's backend alias is
-revive-adbun-staging on port 80; configure your proxy's domain/TLS route to it.
-Apache recognizes the proxy's X-Forwarded-Proto: https header. Configure
-trusted proxy access appropriately. The overlay alone does not issue TLS
-certificates or configure a domain. Keep existing production tag paths stable.
+This disables request-triggered maintenance and enables the worker at minute
+01 of every UTC hour. You can put COMPOSE_PROFILES=maintenance in Easypanel's
+Compose environment AFTER setup, run revive-enable-maintenance in web's shell,
+and redeploy so Easypanel manages the worker. Run only one scheduler.
 
-Staging disables PHP sendmail and rejects external HTTP quickly using local
-proxy variables. The frontend bridge disables IP masquerading, while DB and
-maintenance use an internal network. These are not a complete egress firewall.
-SMTP, GeoIP downloads and external integrations need deliberate production
-configuration, secrets and network policy. Protect the management interface,
-use HTTPS, and do not publish backup archives.
+For a single App service use a host scheduler or a dedicated worker with the
+same state, running as www-data once each hour:
+  php /var/www/html/app/scripts/maintenance/maintenance.php YOUR-DOMAIN
+Do not disable built-in automatic maintenance until a reliable scheduler is
+in place. CLI installation disables it intentionally: configure scheduling.
 
-Checks
-------
+PHP sendmail is disabled. Configure the bundled Mailer plugin for SMTP or
+another supported provider. Outbound HTTP is not blocked by dummy proxies;
+configure production egress policy and any GeoIP account/license deliberately.
+
+Backups, migration and future updates
+-------------------------------------
+Optional Compose backup:
+  python3 scripts/manage.py backup --output /private/revive-backups
+It pauses app writers/worker, dumps with table locks, archives the four app
+paths plus a secret-bearing environment copy, then restarts running services.
+Keep backups private/encrypted/off-server and test restoration separately.
+Easypanel DB backups and four App volume backups must be coordinated.
+Imported legacy MyISAM tables need locking/write pauses; transactions alone
+do not make a consistent backup. Do not copy a live DB data directory.
+
+For older Revive migrations, restore a consistent DB + config + creatives +
+matching plugin files into a SEPARATE staging deployment first, adjust the
+database/domain settings, provide previous-installation files privately and
+follow Revive's authenticated upgrade process. Third-party plugins need review.
+Do not publish those files here or run the fresh installer over existing data.
+
+Changing a version/checksum is not a complete upgrade process. Review release
+notes, back up CURRENT DB/volumes, rehearse, pause writers and run the supported
+upgrade explicitly. Never fix a mismatch by deleting markers or old volumes.
+Image rollback does not undo a database migration. Restore matching DB/files,
+and account for writes accepted after cutover.
+
+Validation
+----------
   python3 -m unittest discover -s tests -v
   python3 -m py_compile scripts/manage.py
-  sh -n docker/entrypoint.sh docker/maintenance.sh
-  docker compose config --quiet
+  php -l docker/runtime.php
+  php tests/runtime_test.php
+  sh -n docker/entrypoint.sh docker/install.sh docker/maintenance.sh
+  docker compose --env-file .env -f docker-compose.yml config --quiet
   python3 scripts/manage.py verify
+Permission tests require a root/container context.
+/healthz tests Apache only: also test real zones, delivery, tracking, reports
+and maintenance. No default admin account or demo campaigns are bundled.
 
 References
 ----------
-  https://github.com/revive-adserver/revive-adserver
+  https://www.revive-adserver.com/download/
   https://www.revive-adserver.com/how-to/install/
   https://www.revive-adserver.com/how-to/update/
   https://www.revive-adserver.com/how-to/secure-your-installation/
+  https://easypanel.io/docs/services/compose
+  https://easypanel.io/docs/services/app

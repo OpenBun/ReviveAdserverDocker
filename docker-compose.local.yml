@@ -1,0 +1,5 @@
+# Optional localhost access for deployments without a reverse proxy.
+services:
+  web:
+    ports:
+      - "127.0.0.1:${HTTP_PORT:-8080}:80"

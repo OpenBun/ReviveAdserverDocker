@@ -1,0 +1,97 @@
+name: ${COMPOSE_PROJECT_NAME:-revive}
+
+x-app: &app
+  image: local/revive-adserver:${REVIVE_VERSION:-6.0.8}
+  build:
+    context: .
+    dockerfile: Dockerfile
+    args:
+      REVIVE_VERSION: ${REVIVE_VERSION:-6.0.8}
+      REVIVE_SHA256: ${REVIVE_SHA256:-8ea81978b876bfeeea1a985e2b9a2bc9a62b1e6fc9bad99e4756a933f588b38d}
+  environment:
+    REVIVE_HOST: ${REVIVE_HOST:-localhost:8080}
+    REVIVE_SCHEME: ${REVIVE_SCHEME:-http}
+    REVIVE_DB_HOST: db
+    REVIVE_DB_PORT: "3306"
+    REVIVE_DB_NAME: ${DB_NAME:-revive}
+    REVIVE_DB_USER: ${DB_USER:-revive}
+    REVIVE_DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in your private environment}
+    REVIVE_AUTO_INSTALL: ${REVIVE_AUTO_INSTALL:-0}
+    REVIVE_ADMIN_USERNAME: ${REVIVE_ADMIN_USERNAME:-}
+    REVIVE_ADMIN_PASSWORD: ${REVIVE_ADMIN_PASSWORD:-}
+    REVIVE_ADMIN_EMAIL: ${REVIVE_ADMIN_EMAIL:-}
+    TZ: UTC
+  volumes:
+    - revive-var:/var/www/html/app/var
+    - revive-images:/var/www/html/app/www/images
+    - revive-plugins:/var/www/html/app/plugins
+    - revive-admin-plugins:/var/www/html/app/www/admin/plugins
+  depends_on:
+    db:
+      condition: service_healthy
+  security_opt:
+    - no-new-privileges:true
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+
+services:
+  db:
+    image: ${MARIADB_IMAGE:-mariadb:11.4}
+    environment:
+      MARIADB_DATABASE: ${DB_NAME:-revive}
+      MARIADB_USER: ${DB_USER:-revive}
+      MARIADB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in your private environment}
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?Set DB_ROOT_PASSWORD in your private environment}
+      TZ: UTC
+    volumes:
+      - mariadb-data:/var/lib/mysql
+    networks: [database]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  web:
+    <<: *app
+    networks: [database, frontend]
+    expose: ["80"]
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  maintenance:
+    <<: *app
+    profiles: [maintenance]
+    networks: [database, frontend]
+    environment:
+      REVIVE_HOST: ${REVIVE_HOST:-localhost:8080}
+      REVIVE_SCHEME: ${REVIVE_SCHEME:-http}
+      REVIVE_AUTO_INSTALL: "0"
+      TZ: UTC
+    command: [maintenance]
+
+networks:
+  database:
+    internal: true
+  frontend: {}
+
+volumes:
+  mariadb-data:
+  revive-var:
+  revive-images:
+  revive-plugins:
+  revive-admin-plugins:
